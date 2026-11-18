@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Colour Codes</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 24px 16px;
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    background: #fff;
+    color: #111;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 24px;
+  }
+  #combo { position: relative; width: 100%; max-width: 420px; }
+  input {
+    width: 100%;
+    font-size: 18px;
+    padding: 12px;
+    border: 1px solid #aaa;
+    border-radius: 8px;
+    background: #fff;
+    color: #111;
+  }
+  #options {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    margin: 4px 0 0;
+    padding: 4px 0;
+    list-style: none;
+    max-height: 50vh;
+    overflow-y: auto;
+    background: #fff;
+    border: 1px solid #aaa;
+    border-radius: 8px;
+    box-shadow: 0 4px 16px rgba(0,0,0,.15);
+    z-index: 10;
+  }
+  #options[hidden] { display: none; }
+  #options li { padding: 10px 12px; font-size: 17px; cursor: pointer; }
+  #options li.active { background: #e6e6e6; }
+  @media (hover: hover) { #options li:hover { background: #e6e6e6; } }
+  @media (prefers-color-scheme: dark) {
+    body { background: #111; color: #eee; }
+    input, #options { background: #222; color: #eee; border-color: #555; }
+    #options li.active { background: #3a3a3a; }
+    @media (hover: hover) { #options li:hover { background: #3a3a3a; } }
+  }
+  #output { width: 100%; max-width: 640px; display: flex; flex-direction: column; align-items: center; gap: 12px; }
+  .code { font-family: ui-monospace, Consolas, monospace; font-size: 22px; user-select: all; }
+  .swatch { width: 160px; height: 160px; border-radius: 8px; border: 1px solid rgba(128,128,128,.4); }
+  table { border-collapse: collapse; width: 100%; }
+  th, td { padding: 8px 4px; text-align: center; }
+  td .swatch { width: 100%; max-width: 120px; height: auto; aspect-ratio: 1; margin: 0 auto 6px; }
+  td .code { font-size: 15px; }
+  th { text-transform: capitalize; }
+</style>
+</head>
+<body>
+<div id="combo">
+  <input id="search" autocomplete="off" spellcheck="false" placeholder="Click here to search or browse"
+         role="combobox" aria-expanded="false" aria-controls="options">
+  <ul id="options" role="listbox" hidden></ul>
+</div>
+<div id="output"></div>
+
+<script>
+const AOE2 = "AoE2 Tech Tree";
+const input = document.getElementById("search");
+const list = document.getElementById("options");
+let names = [];
+let active = -1;
+const output = document.getElementById("output");
+let languages = new Map();
+let aoe2 = null;
+
+function parseCsv(text) {
+  return text.replace(/^﻿/, "").split(/\r?\n/)
+    .map(l => l.trim()).filter(l => l)
+    .map(l => l.split(",").map(c => c.trim()));
+}
+
+function hex(c) { return "#" + c.replace(/^#/, "").toUpperCase(); }
+
+function colourBlock(c) {
+  const wrap = document.createElement("div");
+  const sw = document.createElement("div");
+  sw.className = "swatch";
+  sw.style.background = hex(c);
+  const code = document.createElement("div");
+  code.className = "code";
+  code.textContent = hex(c);
+  wrap.append(sw, code);
+  return wrap;
+}
+
+function render() {
+  const v = input.value.trim().toLowerCase();
+  output.innerHTML = "";
+  if (v === AOE2.toLowerCase() && aoe2) {
+    const table = document.createElement("table");
+    const head = table.insertRow();
+    aoe2[0].forEach((h, i) => {
+      const th = document.createElement("th");
+      th.textContent = i === 0 ? "" : h;
+      head.appendChild(th);
+    });
+    aoe2.slice(1).forEach(row => {
+      const tr = table.insertRow();
+      row.forEach((cell, i) => {
+        const el = document.createElement(i === 0 ? "th" : "td");
+        if (i === 0) el.textContent = cell; else el.appendChild(colourBlock(cell));
+        tr.appendChild(el);
+      });
+    });
+    output.appendChild(table);
+    return;
+  }
+  for (const [name, colour] of languages) {
+    if (name.toLowerCase() === v) {
+      output.appendChild(colourBlock(colour));
+      return;
+    }
+  }
+}
+
+async function load() {
+  const [langText, aoeText] = await Promise.all([
+    fetch("github_languages.csv", { cache: "no-store" }).then(r => r.text()),
+    fetch("aoe2_techtree.csv", { cache: "no-store" }).then(r => r.text()).catch(() => null)
+  ]);
+  parseCsv(langText).slice(1).forEach(([name, colour]) => {
+    if (name && colour) languages.set(name, colour);
+  });
+  if (aoeText) aoe2 = parseCsv(aoeText);
+  names = [...languages.keys(), AOE2];
+  if (document.activeElement === input) openList(false);
+  render();
+}
+
+function openList(filter) {
+  const v = filter ? input.value.trim().toLowerCase() : "";
+  list.innerHTML = "";
+  active = -1;
+  names.filter(n => n.toLowerCase().includes(v)).forEach(name => {
+    const li = document.createElement("li");
+    li.textContent = name;
+    li.setAttribute("role", "option");
+    li.addEventListener("pointerdown", e => e.preventDefault());
+    li.addEventListener("click", () => choose(name));
+    list.appendChild(li);
+  });
+  list.hidden = list.children.length === 0;
+  input.setAttribute("aria-expanded", String(!list.hidden));
+}
+
+function closeList() {
+  list.hidden = true;
+  active = -1;
+  input.setAttribute("aria-expanded", "false");
+}
+
+function choose(name) {
+  input.value = name;
+  closeList();
+  render();
+  input.blur();
+}
+
+function setActive(i) {
+  const items = list.children;
+  if (!items.length) return;
+  if (active >= 0) items[active].classList.remove("active");
+  active = (i + items.length) % items.length;
+  items[active].classList.add("active");
+  items[active].scrollIntoView({ block: "nearest" });
+}
+
+input.addEventListener("focus", () => { input.select(); openList(false); });
+input.addEventListener("click", () => { if (list.hidden) openList(false); });
+input.addEventListener("input", () => { openList(true); render(); });
+input.addEventListener("blur", closeList);
+input.addEventListener("keydown", e => {
+  if (e.key === "ArrowDown") { e.preventDefault(); if (list.hidden) openList(false); setActive(active + 1); }
+  else if (e.key === "ArrowUp") { e.preventDefault(); if (list.hidden) openList(false); setActive(active - 1); }
+  else if (e.key === "Enter") {
+    const items = list.children;
+    if (!list.hidden && items.length) choose(items[active >= 0 ? active : 0].textContent);
+  }
+  else if (e.key === "Escape") closeList();
+});
+load();
+</script>
+</body>
+</html>
