@@ -72,25 +72,27 @@
 <div id="output"></div>
 
 <script>
-const AOE2 = "AoE2 Tech Tree";
 const input = document.getElementById("search");
 const list = document.getElementById("options");
+const output = document.getElementById("output");
 let names = [];
 let active = -1;
-const output = document.getElementById("output");
-let languages = new Map();
-let aoe2 = null;
+const singles = new Map(); // option name -> colour (rows of 2-column CSVs)
+const tables = new Map();  // option name -> rows (CSVs with more than 2 columns)
 
 function parseCsv(text) {
-  return text.replace(/^﻿/, "").split(/\r?\n/)
+  if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
+  return text.split(/\r?\n/)
     .map(l => l.trim()).filter(l => l)
     .map(l => l.split(",").map(c => c.trim()));
 }
 
+function isColour(c) { return /^#?([0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(c); }
 function hex(c) { return "#" + c.replace(/^#/, "").toUpperCase(); }
 
 function colourBlock(c) {
   const wrap = document.createElement("div");
+  if (!isColour(c)) { wrap.textContent = c; return wrap; }
   const sw = document.createElement("div");
   sw.className = "swatch";
   sw.style.background = hex(c);
@@ -101,18 +103,25 @@ function colourBlock(c) {
   return wrap;
 }
 
+function findKey(map, v) {
+  for (const k of map.keys()) if (k.toLowerCase() === v) return k;
+  return null;
+}
+
 function render() {
   const v = input.value.trim().toLowerCase();
   output.innerHTML = "";
-  if (v === AOE2.toLowerCase() && aoe2) {
+  const t = findKey(tables, v);
+  if (t !== null) {
+    const rows = tables.get(t);
     const table = document.createElement("table");
     const head = table.insertRow();
-    aoe2[0].forEach((h, i) => {
+    rows[0].forEach((h, i) => {
       const th = document.createElement("th");
       th.textContent = i === 0 ? "" : h;
       head.appendChild(th);
     });
-    aoe2.slice(1).forEach(row => {
+    rows.slice(1).forEach(row => {
       const tr = table.insertRow();
       row.forEach((cell, i) => {
         const el = document.createElement(i === 0 ? "th" : "td");
@@ -123,24 +132,56 @@ function render() {
     output.appendChild(table);
     return;
   }
-  for (const [name, colour] of languages) {
-    if (name.toLowerCase() === v) {
-      output.appendChild(colourBlock(colour));
-      return;
-    }
+  const s = findKey(singles, v);
+  if (s !== null) output.appendChild(colourBlock(singles.get(s)));
+}
+
+// Find every .csv file next to this page, without a hardcoded file list.
+async function findCsvFiles() {
+  const host = location.hostname;
+  if (host.endsWith(".github.io")) {
+    // GitHub Pages: ask the GitHub API for the repo's file tree.
+    const owner = host.slice(0, -".github.io".length);
+    const parts = location.pathname.split("/").filter(Boolean);
+    const isProject = parts.length > 0 && !/\.html?$/i.test(parts[0]);
+    const repo = isProject ? parts[0] : host;
+    try {
+      const r = await fetch(`https://api.github.com/repos/${owner}/${repo}/git/trees/HEAD?recursive=1`);
+      if (r.ok) {
+        const data = await r.json();
+        return data.tree.filter(f => f.type === "blob" && /\.csv$/i.test(f.path)).map(f => f.path);
+      }
+    } catch {}
   }
+  // Other servers: read the folder listing, if the server provides one.
+  try {
+    const r = await fetch("./", { cache: "no-store" });
+    const doc = new DOMParser().parseFromString(await r.text(), "text/html");
+    return [...new Set([...doc.querySelectorAll("a[href]")]
+      .map(a => a.getAttribute("href").split(/[?#]/)[0])
+      .filter(h => /\.csv$/i.test(h) && !/^([a-z]+:|\/)/i.test(h))
+      .map(h => decodeURIComponent(h)))];
+  } catch { return []; }
+}
+
+function displayName(path) {
+  return path.split("/").pop().replace(/\.csv$/i, "").replace(/_/g, " ");
 }
 
 async function load() {
-  const [langText, aoeText] = await Promise.all([
-    fetch("github_languages.csv", { cache: "no-store" }).then(r => r.text()),
-    fetch("aoe2_techtree.csv", { cache: "no-store" }).then(r => r.text()).catch(() => null)
-  ]);
-  parseCsv(langText).slice(1).forEach(([name, colour]) => {
-    if (name && colour) languages.set(name, colour);
-  });
-  if (aoeText) aoe2 = parseCsv(aoeText);
-  names = [...languages.keys(), AOE2];
+  const files = (await findCsvFiles()).sort((a, b) => a.localeCompare(b));
+  const loaded = await Promise.all(files.map(f =>
+    fetch(f.split("/").map(encodeURIComponent).join("/"), { cache: "no-store" })
+      .then(r => r.ok ? r.text() : null).catch(() => null)
+      .then(text => ({ f, rows: text ? parseCsv(text) : [] }))));
+  for (const { f, rows } of loaded) {
+    const cols = rows.length ? rows[0].length : 0;
+    if (cols > 2) tables.set(displayName(f), rows);
+    else if (cols === 2) rows.slice(1).forEach(([name, colour]) => {
+      if (name && colour) singles.set(name, colour);
+    });
+  }
+  names = [...singles.keys(), ...tables.keys()];
   if (document.activeElement === input) openList(false);
   render();
 }
