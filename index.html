@@ -61,6 +61,9 @@
   td .swatch { width: 100%; max-width: 120px; height: auto; aspect-ratio: 1; margin: 0 auto 6px; }
   td .code { font-size: 15px; }
   th { text-transform: capitalize; }
+  #message { margin: 0; max-width: 420px; text-align: center; }
+  a { color: #0969da; }
+  @media (prefers-color-scheme: dark) { a { color: #4493f8; } }
 </style>
 </head>
 <body>
@@ -69,12 +72,14 @@
          role="combobox" aria-expanded="false" aria-controls="options">
   <ul id="options" role="listbox" hidden></ul>
 </div>
+<p id="message" hidden></p>
 <div id="output"></div>
 
 <script>
 const input = document.getElementById("search");
 const list = document.getElementById("options");
 const output = document.getElementById("output");
+const message = document.getElementById("message");
 let names = [];
 let active = -1;
 const singles = new Map(); // option name -> colour (rows of 2-column CSVs)
@@ -145,13 +150,31 @@ async function findCsvFiles() {
     const parts = location.pathname.split("/").filter(Boolean);
     const isProject = parts.length > 0 && !/\.html?$/i.test(parts[0]);
     const repo = isProject ? parts[0] : host;
+    const key = "csvFiles";
+    let rateLimited = false;
     try {
       const r = await fetch(`https://api.github.com/repos/${owner}/${repo}/git/trees/HEAD?recursive=1`);
       if (r.ok) {
         const data = await r.json();
-        return data.tree.filter(f => f.type === "blob" && /\.csv$/i.test(f.path)).map(f => f.path);
+        const files = data.tree.filter(f => f.type === "blob" && /\.csv$/i.test(f.path)).map(f => f.path);
+        try { localStorage.setItem(key, JSON.stringify(files)); } catch {}
+        return files;
       }
+      if (r.status === 403 || r.status === 429) rateLimited = true;
     } catch {}
+    // API unavailable (e.g. rate limit): use the list saved on the last successful load.
+    try {
+      const saved = JSON.parse(localStorage.getItem(key));
+      if (Array.isArray(saved) && saved.length) return saved;
+    } catch {}
+    if (rateLimited) {
+      const a = document.createElement("a");
+      a.href = `https://github.com/${owner}/${repo}`;
+      a.textContent = "repository";
+      message.append("Hourly rate limit exceeded. Please try again later or browse the colours directly in the ", a, ".");
+      message.hidden = false;
+      return [];
+    }
   }
   // Other servers: read the folder listing, if the server provides one.
   try {
